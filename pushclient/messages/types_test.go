@@ -7,11 +7,11 @@ func TestMessageType(t *testing.T) {
 		Msg      []byte
 		Expected Type
 	}{
-		{[]byte(`{"messageType":"hello"}`), TypeHello},
+		{[]byte(`{"messageType": "hello"}`), TypeHello},
 	}
 
 	for _, c := range cases {
-		if messageType(c.Msg) != c.Expected {
+		if MessageType(c.Msg) != c.Expected {
 			t.Errorf("messageType failed for: %s", c.Msg)
 		}
 	}

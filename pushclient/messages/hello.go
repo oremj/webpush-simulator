@@ -4,7 +4,7 @@ type HelloResp struct {
 	MessageType string   `json:"messageType"`
 	UAID        string   `json:"uaid"`
 	Status      int      `json:"status"`
-	Ping        int      `json:"ping"`
+	Ping        float64  `json:"ping"`
 	Env         string   `json:"env"`
 	ChannelIDs  []string `json:"channelIDs"`
 	UseWebPush  bool     `json:"use_webpush"`

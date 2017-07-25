@@ -11,7 +11,7 @@ const (
 	TypeNotification
 )
 
-var typeField = []byte(`"messageType":"`)
+var typeField = []byte(`"messageType": "`)
 
 func MessageType(msg []byte) Type {
 	idx := bytes.Index(msg, typeField)
