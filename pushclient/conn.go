@@ -47,7 +47,11 @@ func NewConn(ws *websocket.Conn, handler Handler) *Conn {
 func (c *Conn) WriteJSON(v interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.ws.WriteJSON(v)
+	err := c.ws.WriteJSON(v)
+	if err != nil {
+		go c.Close()
+	}
+	return err
 }
 
 func (c *Conn) Hello(req *messages.Hello) error {
