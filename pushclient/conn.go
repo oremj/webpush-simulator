@@ -2,9 +2,9 @@ package pushclient
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/oremj/webpush-simulator/pushclient/messages"
@@ -18,10 +18,10 @@ const (
 	Closing
 )
 
-type Handler interface {
-	HandleHello(*Conn, *messages.HelloResp)
-	HandleRegister(*Conn, *messages.RegisterResp)
-	HandleNotification(*Conn, *messages.NotificationResp)
+type readMsg struct {
+	messageType int
+	data        []byte
+	err         error
 }
 
 type Conn struct {
@@ -30,46 +30,72 @@ type Conn struct {
 	state   ConnState
 	Handler Handler
 
-	UAID       string
-	ChannelIDs []string
-
-	mu      sync.Mutex
-	closeMu sync.Mutex
+	doneLoop  chan bool
+	writeChan chan interface{}
 }
 
 func NewConn(ws *websocket.Conn, handler Handler) *Conn {
-	return &Conn{
-		ws:      ws,
-		Handler: handler,
+	conn := &Conn{
+		ws:        ws,
+		Handler:   handler,
+		doneLoop:  make(chan bool),
+		writeChan: make(chan interface{}, 100),
+	}
+
+	go conn.loop()
+	return conn
+}
+
+func (c *Conn) loop() {
+	defer c.close()
+	for {
+		select {
+		case msg := <-c.writeChan:
+			if err := c.ws.WriteJSON(msg); err != nil {
+				log.Printf("ws.WriteJSON(%s): %v", msg, err)
+				return
+			}
+		case <-c.doneLoop:
+			return
+		}
+	}
+}
+
+func (c *Conn) close() {
+	if err := c.ws.Close(); err != nil {
+		log.Printf("ws.Close(): %v", err)
+	}
+}
+
+func (c *Conn) Close() {
+	c.state = Closing
+	select {
+	case <-c.doneLoop:
+	default:
+		close(c.doneLoop)
 	}
 }
 
 func (c *Conn) WriteJSON(v interface{}) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	err := c.ws.WriteJSON(v)
-	if err != nil {
-		go c.Close()
+	select {
+	case c.writeChan <- v:
+		return nil
+	default:
+		return errors.New("Dropping msg, write channel full.")
 	}
-	return err
 }
 
-func (c *Conn) Hello(req *messages.Hello) error {
+func (c *Conn) Hello(req messages.Hello) (messages.HelloResp, error) {
+	resp := messages.HelloResp{}
 	if err := c.WriteJSON(req); err != nil {
-		return fmt.Errorf("WriteJSON(): %v", err)
+		return resp, fmt.Errorf("WriteJSON(): %v", err)
 	}
 
-	resp := new(messages.HelloResp)
 	if err := c.ws.ReadJSON(&resp); err != nil {
-		return fmt.Errorf("ReadJSON(): %v", err)
+		return resp, fmt.Errorf("ReadJSON(): %v", err)
 	}
 
-	c.UAID = resp.UAID
-	c.ChannelIDs = resp.ChannelIDs
-	c.Handler.HandleHello(c, resp)
-
-	c.state = Registered
-	return nil
+	return resp, nil
 }
 
 func (c *Conn) Register() error {
@@ -77,26 +103,18 @@ func (c *Conn) Register() error {
 	return nil
 }
 
-func (c *Conn) Close() error {
-	c.closeMu.Lock()
-	defer c.closeMu.Unlock()
-	c.state = Closing
-	return c.ws.Close()
-}
-
 func (c *Conn) runHandlers(msg []byte) {
 	switch messages.MessageType(msg) {
 	case messages.TypeRegister:
-		resp := new(messages.RegisterResp)
-		if err := json.Unmarshal(msg, resp); err != nil {
+		resp := messages.RegisterResp{}
+		if err := json.Unmarshal(msg, &resp); err != nil {
 			log.Printf("Unmarshal(%s): %v", msg, err)
 			return
 		}
-		c.ChannelIDs = append(c.ChannelIDs, resp.ChannelID)
 		c.Handler.HandleRegister(c, resp)
 	case messages.TypeNotification:
-		resp := new(messages.NotificationResp)
-		if err := json.Unmarshal(msg, resp); err != nil {
+		resp := messages.NotificationResp{}
+		if err := json.Unmarshal(msg, &resp); err != nil {
 			log.Printf("Unmarshal(%s): %v", msg, err)
 			return
 		}
@@ -114,12 +132,6 @@ func (c *Conn) runHandlers(msg []byte) {
 }
 
 func (c *Conn) Loop() error {
-	if c.state == UnRegistered {
-		if err := c.Hello(messages.NewHello()); err != nil {
-			return fmt.Errorf("Hello(): %v", err)
-		}
-	}
-
 	for {
 		_, msg, err := c.ws.ReadMessage()
 		if c.state == Closing {
@@ -129,9 +141,7 @@ func (c *Conn) Loop() error {
 			return fmt.Errorf("ReadMessage(): %v", err)
 		}
 
-		c.closeMu.Lock()
 		c.runHandlers(msg)
-		c.closeMu.Unlock()
 	}
 	return nil
 }

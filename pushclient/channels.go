@@ -11,7 +11,7 @@ func (c *Channels) Add(id string) {
 func (c *Channels) Remove(id string) {
 	for i := 0; i < len(c.ids); i++ {
 		if id == c.ids[i] {
-			c.ids[idx] = c.ids[len(c.ids)-1]
+			c.ids[i] = c.ids[len(c.ids)-1]
 			c.ids = c.ids[:len(c.ids)-1]
 		}
 	}
@@ -23,4 +23,11 @@ func (c *Channels) List() []string {
 		res[i] = id
 	}
 	return res
+}
+
+func (c *Channels) Set(ids []string) {
+	c.ids = make([]string, len(ids))
+	for i, id := range ids {
+		c.ids[i] = id
+	}
 }

@@ -17,8 +17,10 @@ type Hello struct {
 	UseWebPush  bool     `json:"use_webpush"`
 }
 
-func NewHello() *Hello {
-	return &Hello{
+func NewHello(uaid string, channels []string) Hello {
+	return Hello{
+		UAID:        uaid,
+		ChannelIDs:  channels,
 		MessageType: "hello",
 		UseWebPush:  true,
 	}
