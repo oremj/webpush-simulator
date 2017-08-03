@@ -27,17 +27,15 @@ type readMsg struct {
 type Conn struct {
 	ws *websocket.Conn
 
-	state   ConnState
-	Handler Handler
+	state ConnState
 
 	doneLoop  chan bool
 	writeChan chan interface{}
 }
 
-func NewConn(ws *websocket.Conn, handler Handler) *Conn {
+func NewConn(ws *websocket.Conn) *Conn {
 	conn := &Conn{
 		ws:        ws,
-		Handler:   handler,
 		doneLoop:  make(chan bool),
 		writeChan: make(chan interface{}, 100),
 	}
@@ -103,45 +101,42 @@ func (c *Conn) Register() error {
 	return nil
 }
 
-func (c *Conn) runHandlers(msg []byte) {
+func (c *Conn) decodeMessage(msg []byte) (interface{}, error) {
 	switch messages.MessageType(msg) {
 	case messages.TypeRegister:
 		resp := messages.RegisterResp{}
 		if err := json.Unmarshal(msg, &resp); err != nil {
 			log.Printf("Unmarshal(%s): %v", msg, err)
-			return
+			return nil, err
 		}
-		c.Handler.HandleRegister(c, resp)
+		return resp, nil
 	case messages.TypeNotification:
 		resp := messages.NotificationResp{}
 		if err := json.Unmarshal(msg, &resp); err != nil {
 			log.Printf("Unmarshal(%s): %v", msg, err)
-			return
+			return nil, err
 		}
 
 		ack := messages.NewAck()
 		ack.Add(resp.ChannelID, resp.Version)
 		c.WriteJSON(ack)
 
-		c.Handler.HandleNotification(c, resp)
+		return resp, nil
+
 	case messages.TypeHello:
 		log.Printf("Unexpected hello: %s", msg)
 	default:
 		log.Printf("Unknown message: %s", msg)
 	}
+	return msg, nil
 }
 
-func (c *Conn) Loop() error {
-	for {
-		_, msg, err := c.ws.ReadMessage()
-		if c.state == Closing {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("ReadMessage(): %v", err)
-		}
-
-		c.runHandlers(msg)
+func (c *Conn) ReadMessage() (interface{}, error, bool) {
+	_, msg, err := c.ws.ReadMessage()
+	if err != nil {
+		c.Close()
+		return nil, nil, false
 	}
-	return nil
+	res, err := c.decodeMessage(msg)
+	return res, err, true
 }
