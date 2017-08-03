@@ -10,6 +10,10 @@ func newSemaphore(cnt int) *semaphore {
 	}
 }
 
+func (s *semaphore) Count() int {
+	return len(s.ch)
+}
+
 func (s *semaphore) Acquire() {
 	s.ch <- struct{}{}
 }

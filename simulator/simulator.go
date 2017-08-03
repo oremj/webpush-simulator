@@ -13,64 +13,58 @@ import (
 type Simulator struct {
 	pushURL        string
 	connectionsSem *semaphore
-	connectingSem  *semaphore
+	concurrentSem  *semaphore
 
 	connections connections
 }
 
 func New(options Options) *Simulator {
+	log.Printf("Simulating: %d connections %d concurrent", options.Connections, options.ConcurrentConnections)
 	return &Simulator{
 		pushURL:        options.PushUrl,
-		connectingSem:  newSemaphore(options.Connections),
-		connectionsSem: newSemaphore(options.ConcurrentConnections),
+		concurrentSem:  newSemaphore(options.ConcurrentConnections),
+		connectionsSem: newSemaphore(options.Connections),
 		connections:    connections{},
 	}
 }
 
-func (s *Simulator) connect() (*pushclient.Conn, error) {
+func (s *Simulator) connect(client *pushclient.Client) (*pushclient.Conn, error) {
 	ws, _, err := websocket.DefaultDialer.Dial(s.pushURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	conn := pushclient.NewConn(ws)
-	return conn, err
-}
 
-func (s *Simulator) hello(conn *pushclient.Conn, client *pushclient.Client) error {
 	hello := messages.NewHello(client.UAID, client.Channels().List())
 
 	resp, err := conn.Hello(hello)
 	if err != nil {
-		return fmt.Errorf("conn.hello(%v): %v", hello, err)
+		return nil, fmt.Errorf("conn.hello(%v): %v", hello, err)
 	}
 
 	client.UAID = resp.UAID
 	client.Channels().Set(resp.ChannelIDs)
-	return nil
+	return conn, nil
 }
 
 func (s *Simulator) balance() {
 	for {
 		s.connectionsSem.Acquire()
-		s.connectingSem.Acquire()
+		s.concurrentSem.Acquire()
 		go func() {
 			defer s.connectionsSem.Release()
-
-			conn, err := s.connect()
-			if err != nil {
-				log.Printf("connect(): %v", err)
-
-			}
 
 			client := pushclient.DefaultClientPool.Get()
 			defer pushclient.DefaultClientPool.Put(client)
 
-			err = s.hello(conn, client)
-			s.connectingSem.Release()
+			conn, err := s.connect(client)
+			s.concurrentSem.Release()
 			if err != nil {
-				log.Println(err)
+				log.Printf("connect(): %v", err)
 				return
+
 			}
+			log.Printf("Connections: %d In progress: %d", s.connectionsSem.Count()-s.concurrentSem.Count(), s.concurrentSem.Count())
 
 			s.connections.Add(conn, client)
 			defer s.connections.Remove(conn)
@@ -86,6 +80,7 @@ func (s *Simulator) balance() {
 				}
 				switch val := msg.(type) {
 				case messages.RegisterResp:
+					log.Printf("Registration Response: %v", val)
 					client.Channels().Add(val.ChannelID)
 				case messages.NotificationResp:
 					log.Printf("Notification: %v", val)
@@ -98,18 +93,21 @@ func (s *Simulator) balance() {
 }
 
 func (s *Simulator) chaos() {
-	killConnectionTicker := time.Tick(1 * time.Second)
-	registerTicker := time.Tick(1 * time.Second)
-	notifyTicker := time.Tick(1 * time.Second)
+	killConnectionTicker := time.Tick(3 * time.Second)
+	registerTicker := time.Tick(10 * time.Second)
+	notifyTicker := time.Tick(30 * time.Second)
 	for {
 		select {
 		case <-killConnectionTicker:
+			log.Println("Killing a connection")
 			conn, _ := s.connections.GetRandom()
 			conn.Close()
 		case <-registerTicker:
+			log.Println("Registering a channel")
 			conn, _ := s.connections.GetRandom()
 			conn.Register()
 		case <-notifyTicker:
+			log.Println("Notifying a channel")
 		}
 	}
 }
