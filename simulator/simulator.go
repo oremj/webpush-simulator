@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/oremj/webpush-simulator/endpoint"
 	"github.com/oremj/webpush-simulator/pushclient"
 	"github.com/oremj/webpush-simulator/pushclient/messages"
 )
@@ -16,6 +17,7 @@ type Simulator struct {
 	concurrentSem  *semaphore
 
 	connections connections
+	endpoints   endpoints
 }
 
 func New(options Options) *Simulator {
@@ -24,7 +26,8 @@ func New(options Options) *Simulator {
 		pushURL:        options.PushUrl,
 		concurrentSem:  newSemaphore(options.ConcurrentConnections),
 		connectionsSem: newSemaphore(options.Connections),
-		connections:    connections{},
+		connections:    newConnections(),
+		endpoints:      newEndpoints(),
 	}
 }
 
@@ -82,6 +85,11 @@ func (s *Simulator) balance() {
 				case messages.RegisterResp:
 					log.Printf("Registration Response: %v", val)
 					client.Channels().Add(val.ChannelID)
+					ep := endpoint.New(
+						val.PushEndpoint,
+						client.Keys().PubKey(),
+						client.Keys().AuthKey())
+					s.endpoints.Add(val.ChannelID, ep)
 				case messages.NotificationResp:
 					log.Printf("Notification: %v", val)
 				case []byte:
@@ -93,9 +101,9 @@ func (s *Simulator) balance() {
 }
 
 func (s *Simulator) chaos() {
-	killConnectionTicker := time.Tick(3 * time.Second)
-	registerTicker := time.Tick(10 * time.Second)
-	notifyTicker := time.Tick(30 * time.Second)
+	killConnectionTicker := time.Tick(300 * time.Second)
+	registerTicker := time.Tick(1 * time.Second)
+	notifyTicker := time.Tick(3 * time.Second)
 	for {
 		select {
 		case <-killConnectionTicker:
@@ -107,7 +115,15 @@ func (s *Simulator) chaos() {
 			conn, _ := s.connections.GetRandom()
 			conn.Register()
 		case <-notifyTicker:
-			log.Println("Notifying a channel")
+			_, ep, ok := s.endpoints.GetRandom()
+			if !ok {
+				continue
+			}
+			if err := ep.Notify("test"); err != nil {
+				log.Printf("Notify(): %v", err)
+			}
+
+			log.Printf("Notifying a channel: %v", ep)
 		}
 	}
 }

@@ -12,11 +12,14 @@ type connections struct {
 	conns map[*pushclient.Conn]*pushclient.Client
 }
 
+func newConnections() connections {
+	return connections{
+		conns: make(map[*pushclient.Conn]*pushclient.Client),
+	}
+}
+
 func (c *connections) Add(conn *pushclient.Conn, client *pushclient.Client) {
 	c.mu.Lock()
-	if c.conns == nil {
-		c.conns = make(map[*pushclient.Conn]*pushclient.Client)
-	}
 	c.conns[conn] = client
 	c.mu.Unlock()
 }

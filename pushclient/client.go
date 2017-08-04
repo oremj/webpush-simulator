@@ -3,6 +3,8 @@ package pushclient
 type Client struct {
 	UAID     string
 	channels *Channels
+
+	keys *ClientEncryption
 }
 
 func New(uaid string) *Client {
@@ -17,4 +19,11 @@ func (c *Client) Channels() *Channels {
 		c.channels = new(Channels)
 	}
 	return c.channels
+}
+
+func (c *Client) Keys() *ClientEncryption {
+	if c.keys == nil {
+		c.keys = NewClientEncryption()
+	}
+	return c.keys
 }
