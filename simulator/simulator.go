@@ -9,6 +9,7 @@ import (
 	"github.com/oremj/webpush-simulator/endpoint"
 	"github.com/oremj/webpush-simulator/pushclient"
 	"github.com/oremj/webpush-simulator/pushclient/messages"
+	"github.com/oremj/webpush-simulator/simulator/metrics"
 )
 
 type Simulator struct {
@@ -64,13 +65,17 @@ func (s *Simulator) balance() {
 			s.concurrentSem.Release()
 			if err != nil {
 				log.Printf("connect(): %v", err)
+				metrics.Error("connect")
 				return
-
 			}
 			log.Printf("Connections: %d In progress: %d", s.connectionsSem.Count()-s.concurrentSem.Count(), s.concurrentSem.Count())
 
 			s.connections.Add(conn, client)
-			defer s.connections.Remove(conn)
+			metrics.ConnectionStarted()
+			defer func() {
+				s.connections.Remove(conn)
+				metrics.ConnectionEnded()
+			}()
 
 			for {
 				msg, err, ok := conn.ReadMessage()
@@ -79,11 +84,13 @@ func (s *Simulator) balance() {
 				}
 				if err != nil {
 					log.Printf("conn.ReadMessage(): %v", err)
+					metrics.Error("read_message")
 					return
 				}
 				switch val := msg.(type) {
 				case messages.RegisterResp:
 					log.Printf("Registration Response: %v", val)
+					metrics.RegistrationRecv.Inc()
 					client.Channels().Add(val.ChannelID)
 					ep := endpoint.New(
 						val.PushEndpoint,
@@ -92,8 +99,10 @@ func (s *Simulator) balance() {
 					s.endpoints.Add(val.ChannelID, ep)
 				case messages.NotificationResp:
 					log.Printf("Notification: %v", val)
+					metrics.NotificationRecv(val.ChannelID)
 				case []byte:
 					log.Printf("Unknown message: %v", val)
+					metrics.Error("unknown_msg")
 				}
 			}
 		}()
@@ -101,7 +110,7 @@ func (s *Simulator) balance() {
 }
 
 func (s *Simulator) chaos() {
-	killConnectionTicker := time.Tick(300 * time.Second)
+	killConnectionTicker := time.Tick(3 * time.Second)
 	registerTicker := time.Tick(1 * time.Second)
 	notifyTicker := time.Tick(3 * time.Second)
 	for {
@@ -113,17 +122,23 @@ func (s *Simulator) chaos() {
 		case <-registerTicker:
 			log.Println("Registering a channel")
 			conn, _ := s.connections.GetRandom()
+			if conn == nil {
+				continue
+			}
 			conn.Register()
+			metrics.RegistrationSent.Inc()
 		case <-notifyTicker:
-			_, ep, ok := s.endpoints.GetRandom()
+			channelID, ep, ok := s.endpoints.GetRandom()
 			if !ok {
 				continue
 			}
+			log.Printf("Notifying a channel: %v", ep)
+			metrics.NotificationSent(channelID)
 			if err := ep.Notify("test"); err != nil {
 				log.Printf("Notify(): %v", err)
+				metrics.NotificationCancel(channelID)
+				continue
 			}
-
-			log.Printf("Notifying a channel: %v", ep)
 		}
 	}
 }

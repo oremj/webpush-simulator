@@ -9,6 +9,12 @@ type NotificationResp struct {
 	MessageType string `json:"messageType"`
 	ChannelID   string `json:"channelID"`
 	Version     string `json:"version"`
+	Data        string `json:"data"`
+	Headers     struct {
+		Encoding   string `json:"encoding"`
+		Encryption string `json:"encryption"`
+		CryptoKey  string `json:"crypto_key"`
+	} `json:"headers"`
 }
 
 type Ack struct {
